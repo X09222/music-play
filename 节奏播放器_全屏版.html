@@ -1,0 +1,47 @@
+<!doctype html><html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"><meta name="apple-mobile-web-app-title" content="节奏播放器">
+<title>节奏播放器</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#000;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+#app{position:fixed;inset:0;overflow:hidden;background:#000}#bg{position:absolute;inset:-3%;width:106%;height:106%;object-fit:cover;filter:brightness(.48) saturate(1.12);transition:.4s}
+#shade{position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,.45),rgba(0,0,0,.08) 42%,rgba(0,0,0,.75))}
+.top{position:absolute;top:calc(12px + env(safe-area-inset-top));left:16px;right:16px;z-index:5}.title{font-size:18px;font-weight:700;max-width:85vw;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.small{font-size:12px;opacity:.7}
+#lyrics{position:absolute;z-index:3;left:7%;right:7%;top:24%;height:39%;overflow:hidden;text-align:center}#lyricInner{position:absolute;left:0;right:0;top:50%;transition:transform .18s}
+.line{font-size:19px;line-height:1.65;margin:8px 0;opacity:.38;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.line.active{font-size:25px;font-weight:800;opacity:1;text-shadow:0 0 18px #fff}
+#empty{font-size:16px;line-height:1.8;opacity:.7}#spectrum{position:absolute;z-index:4;left:10px;right:10px;bottom:150px;width:calc(100% - 20px);height:85px}
+.controls{position:absolute;z-index:6;left:16px;right:16px;bottom:calc(18px + env(safe-area-inset-bottom));padding:12px 14px;border-radius:24px;background:rgba(0,0,0,.4);backdrop-filter:blur(16px);border:1px solid rgba(255,255,255,.12)}
+input[type=file]{display:none}#progress{width:100%;height:4px}.times{display:flex;justify-content:space-between;font-size:11px;opacity:.65}.buttons{display:flex;justify-content:center;align-items:center;gap:26px;margin:7px 0}
+button{border:0;color:#fff;background:rgba(255,255,255,.12);border-radius:50%;width:46px;height:46px;font-size:21px}#play{width:56px;height:56px;background:#fff;color:#000}
+.files{display:flex;gap:7px}.filebtn{flex:1;height:34px;border-radius:14px;font-size:13px;background:rgba(255,255,255,.12);color:#fff}
+#status{position:absolute;z-index:8;top:calc(50px + env(safe-area-inset-top));left:15px;right:15px;text-align:center;font-size:12px;opacity:.8}
+</style></head><body><div id="app">
+<img id="bg"><div id="shade"></div><div class="top"><div class="title" id="songTitle">节奏播放器</div><div class="small" id="info">请选择音乐、歌词和图片</div></div>
+<div id="lyrics"><div id="lyricInner"><div id="empty">选择 LRC 歌词后<br>歌词会直接出现在这里</div></div></div>
+<canvas id="spectrum"></canvas><div id="status"></div>
+<div class="controls"><audio id="audio" playsinline></audio>
+<input id="musicInput" type="file" multiple><input id="lrcInput" type="file" multiple><input id="imgInput" type="file" multiple>
+<input id="progress" type="range" min="0" max="1000" value="0"><div class="times"><span id="cur">0:00</span><span id="dur">0:00</span></div>
+<div class="buttons"><button id="prev">‹‹</button><button id="play">▶</button><button id="next">››</button></div>
+<div class="files"><button class="filebtn" id="musicBtn">🎵 音乐</button><button class="filebtn" id="lrcBtn">📝 歌词</button><button class="filebtn" id="imgBtn">🖼️ 图片</button></div>
+</div></div>
+<script>
+const $=x=>document.getElementById(x),audio=$('audio'),bg=$('bg'),inner=$('lyricInner'),status=$('status');let songs=[],images=[],lyrics=[],si=0,ii=0,lines=[],last=-1,ctx,analyser,data,raf;
+const ext=n=>n.split('.').pop().toLowerCase(),msg=t=>{status.textContent=t;clearTimeout(msg.t);msg.t=setTimeout(()=>status.textContent='',1800)},fmt=s=>isFinite(s)?Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'):'0:00';
+$('musicBtn').onclick=()=>$('musicInput').click();$('lrcBtn').onclick=()=>$('lrcInput').click();$('imgBtn').onclick=()=>$('imgInput').click();
+$('musicInput').onchange=e=>{songs=[...e.target.files].filter(f=>f.type.startsWith('audio/')||['mp3','m4a','wav','aac','flac','ogg','opus'].includes(ext(f.name)));if(!songs.length)return msg('没有读取到音乐');si=0;load();msg('音乐已添加')};
+$('imgInput').onchange=e=>{images=[...e.target.files].filter(f=>f.type.startsWith('image/')||['jpg','jpeg','png','webp','gif','heic'].includes(ext(f.name)));ii=0;showImg();msg('图片已添加')};
+$('lrcInput').onchange=async e=>{let fs=[...e.target.files].filter(f=>['lrc','txt'].includes(ext(f.name)));if(!fs.length)return msg('没有读取到歌词');lyrics=await Promise.all(fs.map(async f=>({name:f.name,text:await f.text()})));if(songs.length)match();else parse(lyrics[0].text);msg('歌词已添加')};
+function load(){let f=songs[si];audio.src=URL.createObjectURL(f);$('songTitle').textContent=f.name.replace(/\.[^.]+$/,'');audio.load();match();showImg()}
+function match(){if(!lyrics.length)return;let b=songs[si].name.replace(/\.[^.]+$/,'').toLowerCase(),x=lyrics.find(a=>a.name.replace(/\.[^.]+$/,'').toLowerCase()==b)||lyrics[0];parse(x.text)}
+function parse(t){lines=[];t.split(/\r?\n/).forEach(l=>{let m=[...l.matchAll(/\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]/g)],s=l.replace(/\[[^\]]+\]/g,'').trim();m.forEach(a=>{let z=Number(a[3]||0);if(String(a[3]||'').length==3)z/=1000;else if(String(a[3]||'').length==2)z/=100;lines.push({t:Number(a[1])*60+Number(a[2])+z,s:s||' '})})});lines.sort((a,b)=>a.t-b.t);inner.innerHTML=lines.length?lines.map((x,i)=>`<div class="line" data-i="${i}">${x.s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]))}</div>`).join(''):'<div id="empty">没有识别到 LRC 时间轴</div>'}
+function showImg(){if(!images.length)return;bg.style.opacity=0;let u=URL.createObjectURL(images[ii]);bg.onload=()=>bg.style.opacity=1;bg.src=u}
+audio.ontimeupdate=()=>{ $('cur').textContent=fmt(audio.currentTime);$('progress').value=audio.duration?audio.currentTime/audio.duration*1000:0;let i=0;for(let n=0;n<lines.length;n++){if(lines[n].t<=audio.currentTime)i=n;else break}document.querySelectorAll('.line').forEach((e,n)=>e.classList.toggle('active',n==i));let e=document.querySelector('.line[data-i="'+i+'"]');if(e)inner.style.transform='translateY('+(-e.offsetTop+$('#lyrics').clientHeight/2-e.clientHeight/2)+'px)';if(images.length&&i!=last){last=i;ii=Math.floor(i/Math.max(1,lines.length)*images.length)%images.length;showImg()}};
+audio.onloadedmetadata=()=>{$('dur').textContent=fmt(audio.duration);$('info').textContent=`${songs.length} 首音乐 · ${lyrics.length} 组歌词 · ${images.length} 张图片`};
+$('progress').oninput=e=>{if(audio.duration)audio.currentTime=audio.duration*e.target.value/1000};
+$('play').onclick=async()=>{if(!audio.src)return msg('请先选择音乐');if(!ctx){ctx=new(window.AudioContext||window.webkitAudioContext)();analyser=ctx.createAnalyser();analyser.fftSize=128;let s=ctx.createMediaElementSource(audio);s.connect(analyser);analyser.connect(ctx.destination);data=new Uint8Array(analyser.frequencyBinCount)}if(ctx.state==='suspended')await ctx.resume();audio.paused?audio.play():audio.pause()};
+audio.onplay=()=>{$('play').textContent='❚❚';draw()};audio.onpause=()=>{$('play').textContent='▶'};
+$('prev').onclick=()=>{if(songs.length){si=(si-1+songs.length)%songs.length;load();audio.play()}};$('next').onclick=()=>{if(songs.length){si=(si+1)%songs.length;load();audio.play()}};audio.onended=()=>{$('next').click()};
+const cv=$('spectrum'),c=cv.getContext('2d');function size(){let d=devicePixelRatio||1;cv.width=cv.clientWidth*d;cv.height=cv.clientHeight*d;c.setTransform(d,0,0,d,0,0)}addEventListener('resize',size);size();
+function draw(){cancelAnimationFrame(raf);raf=requestAnimationFrame(draw);analyser.getByteFrequencyData(data);c.clearRect(0,0,cv.clientWidth,cv.clientHeight);let N=48,w=cv.clientWidth/N;for(let i=0;i<N;i++){let v=data[Math.floor(i/N*data.length)]/255,h=Math.max(3,v*cv.clientHeight*.95);c.fillStyle='rgba(255,255,255,'+(.35+.65*v)+')';c.fillRect(i*w+2,cv.clientHeight-h,Math.max(1,w-4),h)}}
+</script></body></html>
